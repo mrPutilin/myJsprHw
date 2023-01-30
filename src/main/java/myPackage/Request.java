@@ -1,5 +1,7 @@
 package myPackage;
 
+import org.apache.http.NameValuePair;
+
 import java.util.List;
 
 public class Request {
@@ -9,12 +11,16 @@ public class Request {
     private final String protocol;
     private final String path;
 
-    public Request(String methodRequest, String path, String protocol, List<String> headerRequest, byte[] bodyRequest) {
+    private final List<NameValuePair> params;
+
+    public Request(String methodRequest, String path, String protocol,
+                   List<String> headerRequest, byte[] bodyRequest, List<NameValuePair> params) {
         this.methodRequest = methodRequest;
         this.path = path;
         this.protocol = protocol;
         this.headerRequest = headerRequest;
         this.bodyRequest = bodyRequest;
+        this.params = params;
 
 
     }
@@ -31,8 +37,15 @@ public class Request {
         return bodyRequest;
     }
 
-    public String getProtocol() { return protocol; }
+    public String getProtocol() {
+        return protocol;
+    }
 
-    public String getPath() { return path; }
+    public String getPath() {
+        return path;
+    }
 
+    public List<NameValuePair> getQueryParams() {
+        return params;
+    }
 }
