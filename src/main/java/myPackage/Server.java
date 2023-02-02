@@ -3,15 +3,12 @@ package myPackage;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.utils.URLEncodedUtils;
 
-import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -63,21 +60,63 @@ class ConnectionHandler {
     public void handle() {
         System.out.println(Thread.currentThread().getName());
         try (
-                final BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                final BufferedInputStream in = new BufferedInputStream(socket.getInputStream());
                 final BufferedOutputStream out = new BufferedOutputStream(socket.getOutputStream());
 
         ) {
-            final String requestLine = in.readLine();
-            final String[] parts = requestLine.split(" ");
-            String[] mainPathAndQuery = parts[1].split("\\?");
 
-            if (parts.length != 3) {
+            final int limit = 4096;
+
+            in.mark(limit);
+
+            byte[] buffer = new byte[limit];
+            final var read = in.read(buffer);
+            byte[] requestLineDelimiter = new byte[]{'\r', '\n'};
+            int requestLineEnd = indexOf(buffer, requestLineDelimiter, 0, read);
+            if (requestLineEnd == -1) {
+                send404(out);
+                return;
+            }
+            final String[] requestLine = new String(Arrays.copyOf(buffer, requestLineEnd)).split(" ");
+            if (requestLine.length != 3) {
+                send404(out);
                 return;
             }
 
-            List<NameValuePair> listOfQuery = URLEncodedUtils.parse(new URI(parts[1]), StandardCharsets.UTF_8);
+            String method = requestLine[0];
 
-            Request request = new Request(parts[0], parts[1], parts[2], null, null, listOfQuery);
+            String[] mainPathAndQuery = requestLine[1].split("\\?");
+
+            List<NameValuePair> listOfQuery = URLEncodedUtils.parse(new URI(requestLine[1]), StandardCharsets.UTF_8);
+
+            int headersStart = requestLineEnd + requestLineDelimiter.length;
+            byte[] headersDelimiter = new byte[]{'\r', '\n', '\r', '\n'};
+            int requestHeadersEnd = indexOf(buffer, headersDelimiter, headersStart, read);
+
+            in.reset();
+
+            in.skip(headersStart);
+
+            byte[] headersBytes = in.readNBytes(requestHeadersEnd - headersStart);
+            List<String> headers = Arrays.asList(new String(headersBytes).split("\r\n"));
+
+            List<NameValuePair> bodies = new ArrayList<>();
+
+            if (!method.equals("GET")) {
+                in.skip(headersDelimiter.length);
+
+                Optional<String> contentLength = extractHeader(headers, "Content-Length");
+                if (contentLength.isPresent()) {
+                    int length = Integer.parseInt(contentLength.get());
+                    byte[] bodBytes = in.readNBytes(length);
+                    bodies = URLEncodedUtils.parse(new String(bodBytes), StandardCharsets.UTF_8);
+                }
+            }
+            System.out.println(bodies);
+
+            Request request = new Request(requestLine[0], requestLine[1], requestLine[2], headers, listOfQuery, bodies);
+            System.out.println(request);
+
 
             if (!handlers.containsKey(request.getMethodRequest())) {
                 send404(out);
@@ -102,7 +141,7 @@ class ConnectionHandler {
             }
 
 
-            final String path = parts[1];
+            final String path = requestLine[1];
             if (!validPath.contains(path)) {
                 send404(out);
                 return;
@@ -128,6 +167,27 @@ class ConnectionHandler {
             throw new RuntimeException(e);
         }
 
+    }
+
+    private static int indexOf(byte[] array, byte[] target, int start, int max) {
+        outer:
+        for (int i = start; i < max - target.length + 1; i++) {
+            for (int j = 0; j < target.length; j++) {
+                if (array[i + j] != target[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    private static Optional<String> extractHeader(List<String> headers, String header) {
+        return headers.stream()
+                .filter(o -> o.startsWith(header))
+                .map(o -> o.substring(o.indexOf(" ")))
+                .map(String::trim)
+                .findFirst();
     }
 
 
